@@ -24,17 +24,21 @@ export class PeerSession extends EventEmitter {
   private inFlightCount = 0;
   private readonly maxPendingRequests: number;
   public readonly peerKey: string; // "ip:port" — used as the scheduler's peerId
+  private stallTimer: NodeJS.Timeout | null = null;
+  private readonly blockTimeoutMs: number;
 
   constructor(
     ip: string,
     port: number,
     infoHash: Buffer,
     myPeerId: Buffer,
-    maxPendingRequests = 5
+    maxPendingRequests = 5,
+    blockTimeoutMs = 30_000
   ) {
     super();
     this.peerKey = `${ip}:${port}`;
     this.maxPendingRequests = maxPendingRequests;
+    this.blockTimeoutMs = blockTimeoutMs;
     this.conn = new PeerConnection(ip, port, infoHash, myPeerId);
     this.wireEvents();
   }
@@ -81,6 +85,7 @@ export class PeerSession extends EventEmitter {
         break;
 
       case MessageType.Piece: {
+        this.resetStallTimer();
         this.inFlightCount--;
         if (this.currentAssembler && this.currentAssembler.pieceIndex === msg.pieceIndex) {
           const isComplete = this.currentAssembler.addBlock(msg.begin, msg.block);
@@ -111,7 +116,16 @@ export class PeerSession extends EventEmitter {
     if (!this.conn.peerChoking) {
       this.fillRequestPipeline();
     }
+    this.resetStallTimer();
     // if peer is choking us, fillRequestPipeline() will run once we get 'unchoke'
+  }
+
+  private resetStallTimer(): void {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = setTimeout(() => {
+      this.emit("error", new Error(`PeerSession ${this.peerKey}: stalled (no data for ${this.blockTimeoutMs}ms)`));
+      this.destroy();
+    }, this.blockTimeoutMs);
   }
 
   private fillRequestPipeline(): void {
@@ -136,6 +150,7 @@ export class PeerSession extends EventEmitter {
   }
 
   destroy(): void {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
     this.conn.destroy();
   }
 }

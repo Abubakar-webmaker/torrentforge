@@ -39,6 +39,7 @@ export class DownloadSession extends EventEmitter {
   private knownPeers: TrackerPeer[] = [];
   private stopped = false;
   private completionResolve: (() => void) | null = null;
+  private reannounceTimer: NodeJS.Timeout | null = null;
 
   constructor(torrent: ParsedTorrent, config: Config) {
     super();
@@ -61,6 +62,7 @@ export class DownloadSession extends EventEmitter {
     });
 
     await this.announceAndConnect();
+    this.scheduleReannounce(this.config.trackerAnnounceIntervalFallbackSec);
 
     await completionPromise;
   }
@@ -71,6 +73,37 @@ export class DownloadSession extends EventEmitter {
 
     const toConnect = peers.slice(0, this.config.maxConcurrentPeers);
     for (const peer of toConnect) {
+      this.spawnPeerSession(peer);
+    }
+  }
+
+  private scheduleReannounce(intervalSec: number): void {
+    if (this.stopped) return;
+
+    this.reannounceTimer = setTimeout(async () => {
+      if (this.stopped) return;
+      try {
+        const peers = await this.announceToTrackers();
+        this.knownPeers = peers;
+        this.refillPeerPool();
+      } catch (err) {
+        this.emit("error", err as Error);
+      }
+      this.scheduleReannounce(intervalSec);
+    }, intervalSec * 1000);
+  }
+
+  /** If we have fewer active connections than maxConcurrentPeers, try connecting to more known peers. */
+  private refillPeerPool(): void {
+    if (this.stopped) return;
+    if (this.sessions.size >= this.config.maxConcurrentPeers) return;
+
+    const slotsAvailable = this.config.maxConcurrentPeers - this.sessions.size;
+    const candidates = this.knownPeers.filter(
+      (p) => !this.sessions.has(`${p.ip}:${p.port}`)
+    );
+
+    for (const peer of candidates.slice(0, slotsAvailable)) {
       this.spawnPeerSession(peer);
     }
   }
@@ -203,11 +236,13 @@ export class DownloadSession extends EventEmitter {
     this.scheduler.removePeer(peerKey);
     this.sessions.delete(peerKey);
     this.emit("peerDisconnected", peerKey);
+    this.refillPeerPool();
   }
 
   private async finish(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    if (this.reannounceTimer) clearTimeout(this.reannounceTimer);
 
     for (const session of this.sessions.values()) {
       session.destroy();
@@ -221,6 +256,7 @@ export class DownloadSession extends EventEmitter {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.reannounceTimer) clearTimeout(this.reannounceTimer);
     for (const session of this.sessions.values()) {
       session.destroy();
     }

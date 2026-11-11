@@ -41,6 +41,14 @@ program
 
       const session = new DownloadSession(torrent, config);
 
+      process.on("SIGINT", () => {
+        logger.info("Received interrupt signal — shutting down gracefully...");
+        void session.stop().then(() => {
+          logger.info("Shutdown complete. Partial download saved (files are pre-allocated; re-run to resume piece-checking later).");
+          process.exit(0);
+        });
+      });
+
       session.on("peerConnected", (peerKey) => {
         logger.debug(`Peer connected: ${peerKey}`);
       });
