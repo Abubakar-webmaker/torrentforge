@@ -62,6 +62,7 @@ export async function announceHttp(
   const url = buildAnnounceUrl(trackerUrl, params);
 
   const res = await fetch(url, { signal });
+  console.log("Tracker announce URL:", url);
   if (!res.ok) {
     throw new Error(`Tracker: HTTP ${res.status} from ${trackerUrl}`);
   }

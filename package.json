@@ -3,14 +3,18 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsx watch src/cli/index.ts",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
+ "scripts": {
+  "build": "tsc",
+  "dev": "tsx watch src/cli/index.ts",
+  "cli": "tsx src/cli/index.ts",
+  "test": "vitest run",
+  "test:watch": "vitest"
+},
+"bin": {
+  "torrentforge": "./dist/cli/index.js"
+},
+"type": "module",
   "keywords": [],
-  "type": "module",
   "dependencies": {
     "commander": "^15.1.0",
     "pino": "^10.4.0",
