@@ -68,6 +68,11 @@ program
 
       session.on("error", (err) => {
         logger.warn(`Non-fatal error: ${err.message}`);
+        if (err.message.includes("fetch failed") || err.message.includes("ECONNREFUSED")) {
+          logger.warn("💡 Hint: If using a local tracker, this might be a Windows Firewall issue.");
+          logger.warn("   Try: 1) Disable Windows Defender Firewall temporarily, or");
+          logger.warn("        2) Add Node.js to firewall exceptions");
+        }
       });
 
       session.on("complete", () => {
