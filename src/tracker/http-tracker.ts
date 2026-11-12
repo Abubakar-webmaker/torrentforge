@@ -61,12 +61,24 @@ export async function announceHttp(
 ): Promise<TrackerResponse> {
   const url = buildAnnounceUrl(trackerUrl, params);
 
-  const res = await fetch(url, { signal });
-  console.log("Tracker announce URL:", url);
-  if (!res.ok) {
-    throw new Error(`Tracker: HTTP ${res.status} from ${trackerUrl}`);
-  }
+  // Use AbortController to implement timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
 
+  try {
+    const res = await fetch(url, { signal: signal || controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    clearTimeout(timeoutId);
+    return parseTrackerResponse(res);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+async function parseTrackerResponse(res: Response): Promise<TrackerResponse> {
   const bodyBuf = Buffer.from(await res.arrayBuffer());
   const decoded = BencodeDecoder.decode(bodyBuf) as { [key: string]: BencodeValue };
 
