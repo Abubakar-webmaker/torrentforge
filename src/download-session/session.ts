@@ -29,6 +29,7 @@ export class DownloadSession extends EventEmitter {
   private readonly torrent: ParsedTorrent;
   private readonly config: Config;
   private readonly myPeerId: Buffer;
+  // Force rebuild
 
   private scheduler: PieceScheduler;
   private diskWriter: DiskWriter;
@@ -124,15 +125,20 @@ export class DownloadSession extends EventEmitter {
             event: "started" as const,
           };
 
+          console.log(`[Tracker] Attempting to announce to: ${url}`);
+
           const response = url.startsWith("udp://")
             ? await announceUdp(url, params)
             : await announceHttp(url, params);
+
+          console.log(`[Tracker] Announce successful, got ${response.peers.length} peers`);
 
           if (response.peers.length > 0) {
             return response.peers;
           }
         } catch (err) {
           // This tracker failed or is unreachable — try the next one (BEP 12 fallback)
+          console.log(`[Tracker] Announce failed: ${(err as Error).message}`);
           this.emit("error", err as Error);
           continue;
         }
