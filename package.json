@@ -9,7 +9,7 @@
     "cli": "tsx src/cli/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "swarm": "tsx scripts/local-swarm-test.ts"
+    "swarm": "tsx scripts/simple-swarm.ts"
   },
   "bin": {
     "torrentforge": "./dist/src/cli/index.js"
