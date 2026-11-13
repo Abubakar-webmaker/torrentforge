@@ -42,6 +42,12 @@ export class DownloadSession extends EventEmitter {
   private completionResolve: (() => void) | null = null;
   private reannounceTimer: NodeJS.Timeout | null = null;
 
+  // Peer failure tracking: prevents reconnection storms
+  private peerFailureCount: Map<string, number> = new Map();
+  private peerCooldownUntil: Map<string, number> = new Map();
+  private readonly maxRetriesPerPeer = 3;
+  private readonly cooldownMs = 5000;
+
   constructor(torrent: ParsedTorrent, config: Config) {
     super();
     this.torrent = torrent;
@@ -99,10 +105,23 @@ export class DownloadSession extends EventEmitter {
     if (this.stopped) return;
     if (this.sessions.size >= this.config.maxConcurrentPeers) return;
 
+    const now = Date.now();
     const slotsAvailable = this.config.maxConcurrentPeers - this.sessions.size;
-    const candidates = this.knownPeers.filter(
-      (p) => !this.sessions.has(`${p.ip}:${p.port}`)
-    );
+
+    const candidates = this.knownPeers.filter((p) => {
+      const peerKey = `${p.ip}:${p.port}`;
+      if (this.sessions.has(peerKey)) return false;
+
+      // Skip peers that have exceeded retry limit
+      const failures = this.peerFailureCount.get(peerKey) ?? 0;
+      if (failures >= this.maxRetriesPerPeer) return false;
+
+      // Skip peers still in cooldown
+      const cooldownUntil = this.peerCooldownUntil.get(peerKey) ?? 0;
+      if (now < cooldownUntil) return false;
+
+      return true;
+    });
 
     for (const peer of candidates.slice(0, slotsAvailable)) {
       this.spawnPeerSession(peer);
@@ -242,7 +261,17 @@ export class DownloadSession extends EventEmitter {
     this.scheduler.removePeer(peerKey);
     this.sessions.delete(peerKey);
     this.emit("peerDisconnected", peerKey);
-    this.refillPeerPool();
+
+    // Track failure and apply cooldown to prevent reconnection storms
+    const failures = (this.peerFailureCount.get(peerKey) ?? 0) + 1;
+    this.peerFailureCount.set(peerKey, failures);
+    this.peerCooldownUntil.set(peerKey, Date.now() + this.cooldownMs);
+
+    // Don't immediately retry — schedule refill after cooldown delay.
+    // This prevents tight connect-fail-reconnect loops that flood memory with socket objects.
+    setTimeout(() => {
+      if (!this.stopped) this.refillPeerPool();
+    }, this.cooldownMs);
   }
 
   private async finish(): Promise<void> {
