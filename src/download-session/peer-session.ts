@@ -5,6 +5,7 @@ import { PieceAssembler, getBlockRequestsForPiece, BLOCK_SIZE, type BlockRequest
 
 export interface PeerSessionEvents {
   ready: [];                                  // handshake done, bitfield processed, ready to be scheduled
+  unchoked: [];                               // peer sent unchoke message
   pieceAvailable: [pieceIndex: number];       // peer has a piece (from bitfield or 'have')
   pieceComplete: [pieceIndex: number, data: Buffer];
   error: [err: Error];
@@ -77,6 +78,7 @@ export class PeerSession extends EventEmitter {
 
       case MessageType.Unchoke:
         this.fillRequestPipeline();
+        this.emit("unchoked");
         break;
 
       case MessageType.Choke:
