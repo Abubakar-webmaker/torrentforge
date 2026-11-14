@@ -190,6 +190,10 @@ export class DownloadSession extends EventEmitter {
       this.tryAssignWork(session);
     });
 
+    session.on("unchoked", () => {
+      this.tryAssignWork(session);
+    });
+
     session.on("pieceComplete", (pieceIndex, data) => {
       void this.handlePieceComplete(session, pieceIndex, data);
     });
