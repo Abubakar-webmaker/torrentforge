@@ -52,11 +52,17 @@ export class PeerConnection extends EventEmitter {
     socket.once("connect", () => {
       socket.setTimeout(0); // disable connect-timeout once connected
       this.emit("connect");
+      if (process.env.DEBUG_PEER) {
+        console.error(`[PeerConnection] Sending handshake to ${this.ip}:${this.port}`);
+      }
       // Send handshake immediately upon TCP connect
       socket.write(buildHandshake(this.infoHash, this.peerId));
     });
 
     socket.on("data", (chunk: Buffer) => {
+      if (process.env.DEBUG_PEER) {
+        console.error(`[PeerConnection] Received ${chunk.length} bytes from ${this.ip}:${this.port}`);
+      }
       this.recvBuffer = Buffer.concat([this.recvBuffer, chunk]);
       this.processBuffer();
     });
@@ -71,6 +77,9 @@ export class PeerConnection extends EventEmitter {
     });
 
     socket.on("close", () => {
+      if (process.env.DEBUG_PEER) {
+        console.error(`[PeerConnection] Closed: ${this.ip}:${this.port}`);
+      }
       this.emit("close");
     });
   }

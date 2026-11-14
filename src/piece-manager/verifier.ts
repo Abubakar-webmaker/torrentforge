@@ -17,13 +17,42 @@ export class PieceVerifier {
   private nextWorkerIndex = 0;
   private nextJobId = 0;
   private pendingJobs: Map<number, PendingJob> = new Map();
+  private jobWorkerMap: Map<number, Worker> = new Map(); // Track which worker each job was sent to
   private workerScriptPath: string;
 
   constructor(workerScriptPath?: string, poolSize?: number) {
     // Default: compiled worker script location, sized to available CPU cores
-    // Path: from dist/piece-manager/verifier.js to dist/workers/hash-worker.js
-    this.workerScriptPath =
-      workerScriptPath ?? fileURLToPath(new URL("../../workers/hash-worker.js", import.meta.url));
+    if (!workerScriptPath) {
+      const currentFilePath = fileURLToPath(import.meta.url);
+      const parts = currentFilePath.split(/[\\/]/);
+      
+      // When running from dist (compiled): dist/src/piece-manager/verifier.js
+      // When running from src (in tests): src/piece-manager/verifier.ts
+      // We need either dist/workers/hash-worker.js (production) or dist/workers/hash-worker.js (tests - must compile)
+      
+      let targetPath: string;
+      const distIdx = parts.lastIndexOf("dist");
+      
+      if (distIdx !== -1) {
+        // Running from compiled dist folder
+        targetPath = [...parts.slice(0, distIdx + 1), "workers", "hash-worker.js"].join("/");
+      } else {
+        // Running from src (tests via tsx): find project root and go to dist/workers
+        const srcIdx = parts.lastIndexOf("src");
+        if (srcIdx !== -1) {
+          // Replace src with dist, then add workers path
+          const pathToRoot = parts.slice(0, srcIdx);
+          targetPath = [...pathToRoot, "dist", "workers", "hash-worker.js"].join("/");
+        } else {
+          // Fallback: use relative from current location
+          targetPath = fileURLToPath(new URL("../../workers/hash-worker.js", import.meta.url));
+        }
+      }
+      
+      this.workerScriptPath = targetPath;
+    } else {
+      this.workerScriptPath = workerScriptPath;
+    }
 
     const size = poolSize ?? Math.max(1, cpus().length - 1);
 
@@ -40,6 +69,7 @@ export class PieceVerifier {
       if (!pending) return; // stale/unknown job, ignore
 
       this.pendingJobs.delete(result.jobId);
+      this.jobWorkerMap.delete(result.jobId); // Clean up tracking
       
       if (result.error) {
         pending.reject(new Error(`Worker error: ${result.error}`));
@@ -49,12 +79,28 @@ export class PieceVerifier {
       }
     });
 
-    worker.on("error", (err) => {
-      // Reject all pending jobs assigned to this worker's in-flight set is complex;
-      // simplest safe approach: this worker is unhealthy, replace it.
+    worker.on("error", (err: unknown) => {
+      // Find and reject all pending jobs sent to this crashed worker
+      const jobsForThisWorker: number[] = [];
+      for (const [jobId, assignedWorker] of this.jobWorkerMap) {
+        if (assignedWorker === worker) {
+          jobsForThisWorker.push(jobId);
+        }
+      }
+      
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      for (const jobId of jobsForThisWorker) {
+        const pending = this.pendingJobs.get(jobId);
+        if (pending) {
+          pending.reject(new Error(`Worker crashed: ${errorMessage}`));
+          this.pendingJobs.delete(jobId);
+        }
+        this.jobWorkerMap.delete(jobId);
+      }
+
+      // Remove the crashed worker and spawn a replacement
       this.workers = this.workers.filter((w) => w !== worker);
       this.spawnWorker();
-      void err; // logged by caller via verifyPiece's own error path if needed
     });
 
     worker.on("exit", (code) => {
@@ -90,6 +136,7 @@ export class PieceVerifier {
         },
       };
       this.pendingJobs.set(jobId, pending);
+      this.jobWorkerMap.set(jobId, worker); // Track which worker this job was sent to
 
       worker.postMessage({ jobId, pieceIndex, data });
     });
@@ -99,5 +146,6 @@ export class PieceVerifier {
     await Promise.all(this.workers.map((w) => w.terminate()));
     this.workers = [];
     this.pendingJobs.clear();
+    this.jobWorkerMap.clear();
   }
 }
